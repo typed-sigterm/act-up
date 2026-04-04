@@ -3,8 +3,8 @@ name = "act-up"
 version = "0.1.0"
 description = "Update pinned GitHub Actions references in workflow files."
 authors = ["Typed SIGTERM"]
+repository = "https://github.com/typed-sigterm/act-up/"
 edition = "2024"
-publish = false
 
 [dependencies]
 anyhow = "1.0"
