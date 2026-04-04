@@ -1,4 +1,4 @@
-name: CI
+name: autofix.ci
 
 on:
   pull_request:
@@ -14,6 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+      - run: rustup component add clippy rustfmt
       - run: cargo test
       - run: cargo fmt
       - run: cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features -- -D warnings
