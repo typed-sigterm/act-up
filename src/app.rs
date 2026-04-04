@@ -141,7 +141,6 @@ fn collect_yaml_files(patterns: &[String]) -> Result<Vec<PathBuf>> {
         .parents(false)
         .overrides(overrides)
         .build()
-        .into_iter()
         .filter_map(std::result::Result::ok)
     {
         let path = entry.path();
