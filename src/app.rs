@@ -61,6 +61,7 @@ pub fn run() -> Result<()> {
         warn!("no files matching given patterns");
         return Ok(());
     }
+    info!("checking {} files", files.len());
 
     let mut api = GithubApi::new()?;
     let mut all_changes = Vec::new();
