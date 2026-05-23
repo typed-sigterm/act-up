@@ -20,4 +20,4 @@ github-attestations = true
 # Whether to install an updater program
 install-updater = false
 # Publish jobs to run in CI
-publish-jobs = ["./publish-to-creates-io"]
+publish-jobs = ["./publish-to-crates-io"]
