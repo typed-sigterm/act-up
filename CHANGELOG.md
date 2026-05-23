@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1 (2026-05-23)
+
+### 🩹 Bug Fixes
+
+- Fix TLS error
+
 ## 1.0.0 (2026-04-04)
 
 ### 🩹 Bug Fixes

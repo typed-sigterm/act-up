@@ -1,10 +1,11 @@
 [package]
 name = "act-up"
-version = "1.0.0"
+version = "1.0.1"
 description = "Update `uses` references in your GitHub Actions workflow files."
 authors = ["Typed SIGTERM"]
 repository = "https://github.com/typed-sigterm/act-up/"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 anyhow = "1.0"
