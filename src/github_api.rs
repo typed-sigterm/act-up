@@ -1,27 +1,11 @@
 use std::collections::HashMap;
-use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
-use regex::Regex;
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use tracing::debug;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RefPrecision {
-    Major,
-    Minor,
-    Patch,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ParsedSemverRef {
-    prefix: String,
-    major: u64,
-    minor: Option<u64>,
-    patch: Option<u64>,
-    precision: RefPrecision,
-}
+use crate::parser::{RefPrecision, format_ref_with_style, parse_semverish_ref};
 
 #[derive(Debug, Deserialize)]
 struct CommitResponse {
@@ -44,20 +28,23 @@ impl GithubApi {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::USER_AGENT,
-            reqwest::header::HeaderValue::from_static("act-up/0.1"),
+            reqwest::header::HeaderValue::from_static(concat!(
+                "act-up/",
+                env!("CARGO_PKG_VERSION")
+            )),
         );
 
         if let Ok(token) = std::env::var("GITHUB_TOKEN") {
-            let value = format!("Bearer {token}");
             headers.insert(
                 reqwest::header::AUTHORIZATION,
-                reqwest::header::HeaderValue::from_str(&value)
+                reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
                     .context("invalid GITHUB_TOKEN for Authorization header")?,
             );
         }
 
         let client = Client::builder()
             .default_headers(headers)
+            .http1_only()
             .build()
             .context("failed to build github http client")?;
 
@@ -102,7 +89,6 @@ impl GithubApi {
         current_ref: &str,
     ) -> Result<Option<String>> {
         let Some(current) = parse_semverish_ref(current_ref) else {
-            // Branch-like refs keep same textual ref under "preserve original format" policy.
             return Ok(None);
         };
 
@@ -117,32 +103,19 @@ impl GithubApi {
                 continue;
             }
 
-            let t_major = parsed_tag.major;
-            let t_minor = parsed_tag.minor;
-            let t_patch = parsed_tag.patch;
-
             let in_scope = if current.precision == RefPrecision::Major {
-                t_major == current.major
+                parsed_tag.major == current.major
             } else {
-                t_major == current.major && t_minor == current.minor
+                parsed_tag.major == current.major && parsed_tag.minor == current.minor
             };
 
-            if !in_scope {
-                continue;
-            }
-
-            let score = (t_major, t_minor.unwrap_or(0), t_patch.unwrap_or(0));
-            if let Some(current_best) = &best {
-                if score.0 > current_best.0
-                    || (score.0 == current_best.0 && score.1 > current_best.1)
-                    || (score.0 == current_best.0
-                        && score.1 == current_best.1
-                        && score.2 > current_best.2)
-                {
-                    best = Some(score);
-                }
-            } else {
-                best = Some(score);
+            if in_scope {
+                let score = (
+                    parsed_tag.major,
+                    parsed_tag.minor.unwrap_or(0),
+                    parsed_tag.patch.unwrap_or(0),
+                );
+                best = Some(best.map_or(score, |b| b.max(score)));
             }
         }
 
@@ -151,11 +124,7 @@ impl GithubApi {
         };
 
         let candidate = format_ref_with_style(&current, best_score.0, best_score.1, best_score.2);
-        if candidate == current_ref {
-            Ok(None)
-        } else {
-            Ok(Some(candidate))
-        }
+        Ok((candidate != current_ref).then_some(candidate))
     }
 
     fn list_repo_tags(&mut self, owner: &str, repo: &str) -> Result<Vec<String>> {
@@ -184,133 +153,5 @@ impl GithubApi {
 
         self.tags_cache.insert(key, tag_names.clone());
         Ok(tag_names)
-    }
-}
-
-fn parse_semverish_ref(input: &str) -> Option<ParsedSemverRef> {
-    let caps = semverish_regex().captures(input)?;
-
-    let mut prefix = caps
-        .name("prefix")
-        .map(|m| m.as_str().to_string())
-        .unwrap_or_default();
-    if caps.name("v").is_some() {
-        prefix.push('v');
-    }
-
-    let major = caps.name("major")?.as_str().parse::<u64>().ok()?;
-    let minor = caps
-        .name("minor")
-        .and_then(|m| m.as_str().parse::<u64>().ok());
-    let patch = caps
-        .name("patch")
-        .and_then(|m| m.as_str().parse::<u64>().ok());
-
-    let precision = if patch.is_some() {
-        RefPrecision::Patch
-    } else if minor.is_some() {
-        RefPrecision::Minor
-    } else {
-        RefPrecision::Major
-    };
-
-    Some(ParsedSemverRef {
-        prefix,
-        major,
-        minor,
-        patch,
-        precision,
-    })
-}
-
-fn format_ref_with_style(
-    current: &ParsedSemverRef,
-    best_major: u64,
-    best_minor: u64,
-    best_patch: u64,
-) -> String {
-    match current.precision {
-        RefPrecision::Major => format!("{}{best_major}", current.prefix),
-        RefPrecision::Minor => format!("{}{best_major}.{best_minor}", current.prefix),
-        RefPrecision::Patch => format!("{}{best_major}.{best_minor}.{best_patch}", current.prefix),
-    }
-}
-
-fn semverish_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(
-            r"^(?P<prefix>[\w-]*[-/])?(?P<v>v)?(?P<major>\d+)(?:\.(?P<minor>\d+))?(?:\.(?P<patch>\d+))?$",
-        )
-        .expect("valid semverish regex")
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_semverish_refs() {
-        assert_eq!(
-            parse_semverish_ref("v4"),
-            Some(ParsedSemverRef {
-                prefix: "v".to_string(),
-                major: 4,
-                minor: None,
-                patch: None,
-                precision: RefPrecision::Major,
-            })
-        );
-        assert_eq!(
-            parse_semverish_ref("v1.2"),
-            Some(ParsedSemverRef {
-                prefix: "v".to_string(),
-                major: 1,
-                minor: Some(2),
-                patch: None,
-                precision: RefPrecision::Minor,
-            })
-        );
-        assert_eq!(
-            parse_semverish_ref("prefix/v1.2.3"),
-            Some(ParsedSemverRef {
-                prefix: "prefix/v".to_string(),
-                major: 1,
-                minor: Some(2),
-                patch: Some(3),
-                precision: RefPrecision::Patch,
-            })
-        );
-        assert_eq!(parse_semverish_ref("main"), None);
-    }
-
-    #[test]
-    fn preserves_precision_style() {
-        let major = ParsedSemverRef {
-            prefix: "v".to_string(),
-            major: 6,
-            minor: None,
-            patch: None,
-            precision: RefPrecision::Major,
-        };
-        let minor = ParsedSemverRef {
-            prefix: "v".to_string(),
-            major: 1,
-            minor: Some(2),
-            patch: None,
-            precision: RefPrecision::Minor,
-        };
-        let patch = ParsedSemverRef {
-            prefix: "v".to_string(),
-            major: 1,
-            minor: Some(2),
-            patch: Some(3),
-            precision: RefPrecision::Patch,
-        };
-
-        assert_eq!(format_ref_with_style(&major, 6, 1, 4), "v6");
-        assert_eq!(format_ref_with_style(&minor, 1, 2, 9), "v1.2");
-        assert_eq!(format_ref_with_style(&patch, 1, 2, 9), "v1.2.9");
     }
 }
